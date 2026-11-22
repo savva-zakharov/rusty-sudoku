@@ -24,6 +24,52 @@ npx --yes serve@14 dist --listen tcp://0.0.0.0:8081 --no-clipboard
 
 Open `http://<this-machine's-LAN-IP>:8081` on a phone on the same network.
 
+## Release builds (GitHub Actions)
+
+Pushing a tag builds the game for Windows, Linux and Android and publishes the builds as a
+GitHub release named after the tag (`.github/workflows/release.yml`):
+
+```bash
+git tag v0.1
+```
+
+```bash
+git push origin v0.1
+```
+
+| File | Contents |
+| --- | --- |
+| `rusty-sudoku-<tag>-windows-x64.zip` | `rusty-sudoku.exe`, `assets/` and this README |
+| `rusty-sudoku-<tag>-linux-x64.tar.gz` | the `rusty-sudoku` binary, `assets/` and this README (built on Ubuntu 22.04) |
+| `rusty-sudoku-<tag>-android.apk` | the game for Android 5 and later (ARM phones and tablets, x86_64 Chromebooks and emulators), portrait or landscape as the phone is held |
+
+Some things to know:
+
+- Each platform is its own job, so if one fails the others still go into the release. You can see
+  each job's log in the repository's Actions tab, and also start a build there by hand ("Run
+  workflow"); a hand-started run makes the files as downloads on the run, without a release.
+- The Linux binary needs ALSA, X11 and OpenGL, which desktop distributions have already.
+- The Android build uses macroquad's packager, `cargo quad-apk`, built from source at a pinned
+  commit (`QUAD_APK_REV` in the workflow), with the runner's Android SDK and NDK. Its settings
+  (app name, package name, SDK versions, orientation) are under `[package.metadata.android]` in
+  `Cargo.toml`. The app id is `io.github.savvazakharov.rusty_sudoku`. The package name must end in
+  `rusty-sudoku`, the binary's name, or the app can't find its native library and closes on
+  launch. Android asks you to allow installing it from an unknown source.
+- Before the APK goes into a release, it's installed and launched on an Android 10 and an
+  Android 15 emulator, and must still be running 25 seconds later
+  (`.github/android-smoke-test.sh`). Each test keeps its logcat and a screenshot as downloads
+  on the run. If a test fails, the release goes out without the APK.
+- Each build's `versionCode` is the workflow run number and its `versionName` is the tag without
+  the `v`, so a new release installs over the last one.
+- The APK is signed in the workflow. Set two repository secrets so every build is signed with
+  the same key and new versions install over old ones: `ANDROID_KEYSTORE` (a `.jks` keystore,
+  base64-encoded) and `ANDROID_KEYSTORE_PASSWORD`. Without them, each run signs with a throwaway
+  key: the APK installs, but moving to another build means uninstalling the old one first.
+- On Android the colour schemes and sounds are packed inside the APK.
+- The app icon is `assets/icon.png`: built into the desktop program, linked by the web page,
+  and turned into the Android launcher icons (`android/res/mipmap-*/ic_launcher.png`) by
+  `python android/icons.py` (needs Pillow). Run that again after changing the icon.
+
 ## Screen
 
 The base screen is 315 x 560 in portrait (9:16). Taller screens add rows: the

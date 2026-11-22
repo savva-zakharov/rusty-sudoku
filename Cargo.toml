@@ -6,6 +6,39 @@ edition = "2021"
 [dependencies]
 macroquad = { version = "0.4", features = ["audio"] }
 
+# Android APK (built by `cargo quad-apk`, see .github/workflows/release.yml).
+# The APK's asset folder is `android/apk-assets/`, which the workflow fills
+# with a copy of `assets/` inside an `assets/` folder, so the game finds its
+# files at `assets/...` just as on desktop and the web.
+[package.metadata.android]
+# cargo-quad-apk loads the native library named after the last part of the
+# package name, so it must end in the binary's name (librusty-sudoku.so).
+# Android's app id turns the hyphen into an underscore: ...rusty_sudoku.
+package_name = "io.github.savvazakharov.rusty-sudoku"
+label = "Rusty Sudoku"
+assets = "android/apk-assets"
+# Launcher icon: android/res/mipmap-*/ic_launcher.png, made from
+# assets/icon.png by android/icons.py.
+res = "android/res"
+icon = "@mipmap/ic_launcher"
+fullscreen = true
+# Compile and target a current Android, or new phones refuse to install it.
+android_version = 36
+target_sdk_version = 36
+min_sdk_version = 21
+# The workflow sets these from the tag and run number, so updates install.
+version_code = 1
+version_name = "0.0.0"
+# x86_64 is for emulators and Chromebooks.
+build_targets = ["armv7-linux-androideabi", "aarch64-linux-android", "x86_64-linux-android"]
+
+[package.metadata.android.activity_attributes]
+# Portrait first, but turning the phone (with rotation unlocked) switches to
+# the landscape layout.
+"android:screenOrientation" = "fullUser"
+# Required for the launcher activity when targeting Android 12 (SDK 31) or later.
+"android:exported" = "true"
+
 [profile.dev]
 opt-level = 1
 

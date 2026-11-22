@@ -1,3 +1,3 @@
 /target
 /dist
-*.png.tmp
+/android/apk-assets

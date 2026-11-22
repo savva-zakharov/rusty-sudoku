@@ -12,7 +12,7 @@ if (Test-Path dist) { Remove-Item -Recurse -Force dist }
 New-Item -ItemType Directory -Force dist/assets/palettes, dist/assets/sounds | Out-Null
 Copy-Item web/index.html, web/gl.js, web/audio.js, web/net.js dist/
 Copy-Item target/wasm32-unknown-unknown/release/rusty-sudoku.wasm dist/
-Copy-Item assets/palettes.txt dist/assets/
+Copy-Item assets/palettes.txt, assets/icon.png dist/assets/
 foreach ($line in Get-Content assets/palettes.txt) {
     $name = ($line -replace '#.*', '').Trim()
     if ($name -match '^[A-Za-z0-9_-]+$' -and (Test-Path "assets/palettes/$name.png")) {
