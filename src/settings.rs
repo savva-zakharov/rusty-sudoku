@@ -9,6 +9,8 @@
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Settings {
+    /// The daily leaderboard nickname.
+    pub name: String,
     pub level: Option<usize>,
     /// Board size: 9 or 6.
     pub size: Option<usize>,
@@ -31,6 +33,7 @@ impl Settings {
             let Some((k, v)) = line.split_once('=') else { continue };
             let v = v.trim().to_string();
             match k.trim() {
+                "name" => s.name = v,
                 "level" => s.level = v.parse().ok(),
                 "size" => s.size = v.parse().ok(),
                 "colours" => s.colours = v,
@@ -46,7 +49,7 @@ impl Settings {
     }
 
     pub fn text(&self) -> String {
-        let mut t = format!("colours={}\n", self.colours);
+        let mut t = format!("name={}\ncolours={}\n", self.name, self.colours);
         if !self.font.is_empty() {
             t += &format!("font={}\n", self.font);
         }
@@ -150,7 +153,7 @@ mod tests {
 
     #[test]
     fn settings_survive_a_round_trip() {
-        let s = Settings { level: Some(3), size: Some(6), colours: "AMBER".into(), crt: Some(false), font: "SERIF".into(), muted: Some(true), board: "20261121.1.abc".into(), games: vec!["a".into(), "b".into()] };
+        let s = Settings { name: "SAVVA".into(), level: Some(3), size: Some(6), colours: "AMBER".into(), crt: Some(false), font: "SERIF".into(), muted: Some(true), board: "20261121.1.abc".into(), games: vec!["a".into(), "b".into()] };
         assert_eq!(Settings::parse(&s.text()), s);
     }
 }

@@ -484,6 +484,26 @@ mod tests {
         }
     }
 
+    /// Boards for the server's port (pano-gallery's api/_sudoku.js) to check
+    /// itself against: `SUDOKU_FIXTURE=path cargo test fixture` writes
+    /// `seed size level puzzle solution` lines.
+    #[test]
+    fn fixture() {
+        let Ok(path) = std::env::var("SUDOKU_FIXTURE") else { return };
+        let mut out = String::new();
+        for seed in [20261121, 20261122, 20261231, 12345678] {
+            for s in SHAPES {
+                for k in 0..LEVELS.len() {
+                    let (p, sol) = generate(s, seed, k);
+                    let digits = |g: &Grid| g.iter().map(|d| d.to_string()).collect::<String>();
+                    out += &format!("{seed} {} {} {} {}
+", s.n, LEVELS[k].name, digits(&p), digits(&sol));
+                }
+            }
+        }
+        std::fs::write(path, out).unwrap();
+    }
+
     #[test]
     fn units_cover_the_grid() {
         for s in SHAPES {

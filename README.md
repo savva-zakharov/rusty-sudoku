@@ -92,8 +92,8 @@ in one row across the bottom.
   are dimmed.
 - **Command line** (`>`): what happened, typed out with click sounds.
 - **Control bar**: `[U]NDO`, `[E]RASE`, `[N]OTES`, `[F]AST`, `[H]INT`, `[T]HEME`, `NE[W]`,
-  `[M]UTE` (red while the sound is off). Two rows of four in portrait, one row in
-  landscape.
+  `DAIL[Y]`, `[M]UTE` (red while the sound is off). Two rows (five, then four) in
+  portrait, one row in landscape.
 
 ## Playing
 
@@ -142,6 +142,7 @@ there works too): swipe left / right for the next / previous digit still to plac
 | `H` | hint |
 | `T` | theme: colours, CRT scanlines and font |
 | `W` | new board |
+| `Y` | daily challenge |
 | `M` | mute |
 | `C` | scanlines on or off |
 | `Esc` | quit (desktop) |
@@ -197,6 +198,52 @@ each change at once, and `[A]CCEPT` keeps them (`[E]XIT` goes back).
 The font is used for all text and the board's and buttons' digits; the small note
 digits keep their own font.
 
+## Daily challenge
+
+`DAIL[Y]` (`Y`) opens the **DAILY CHALLENGE** dialog. Each day (UTC) has ten boards,
+two sizes by five levels, generated from the date, so everyone playing 9x9 MEDIUM on
+2026-11-22 gets the same board. `<` / `>` pick the level and `[S]IZE` the size; the dialog
+shows that board's top ten online and how many have played. `[P]LAY` starts it. Today's
+boards (also when started from `NE[W]` with today's seed) have no hints: `[H]INT` is dimmed.
+
+Solving one shows your time to a tenth of a second and asks for a nickname, arcade style:
+up to eight letters, digits, `-`, `.` or `_`. Type it, or use `^` / `⌄` to change the
+letter under the cursor and `<` / `>` to move. `[ENTER] SEND` sends it, `[ESC] SKIP`
+doesn't; the leaderboard then shows where you placed. Each name keeps only its best time
+per board. The name is saved and filled in next time. If the time can't be sent
+(`OFFLINE`), `[ENTER] RETRY` tries again. A board solved with hints (say, from before the
+daily) isn't ranked.
+
+The leaderboard lives on the website that hosts the web version of rusty-majong: a Vercel
+function at `/api/sudoku` in the pano-gallery project (`api/sudoku.js`, beside mahjong's
+`api/daily.js`), storing times in the same Upstash Redis. The web version asks its own site;
+desktop and Android builds send to `https://mindbird.site/api/sudoku`
+(`daily::DEFAULT_URL` in `src/daily.rs`), or to `--leaderboard URL`. The server:
+
+- only takes today's and yesterday's boards (for anyone finishing just after midnight UTC);
+- only takes a time sent with the board's solution: it generates the board again with
+  `api/_sudoku.js`, a port of the game's generator (`src/sudoku.rs`);
+- rejects times under 30 s (9x9) or 10 s (6x6), badly formed names and names on a small
+  blocklist (`PICK ANOTHER NAME`);
+- limits each address to 30 submissions and 300 leaderboard reads an hour.
+
+The time is still the game's word, so a determined cheat can fake one. Remove an entry in
+the Upstash console with `ZREM sudoku:<date>:<size>:<level> <NAME>`.
+
+`api/_sudoku.js` must generate exactly as the game does. If the generator, the levels or
+the random numbers change, update it too, or every genuine time is rejected. To check:
+`node web/dev-server.js` serves the web build from `dist/` at http://localhost:8081 and runs
+`api/sudoku.js` with an in-memory store instead of Redis, then
+`DAILY_TEST_URL=http://localhost:8081/api/sudoku cargo test -- --ignored daily` solves all
+ten of today's boards and sends them; the server must accept every one. A desktop build can
+play against it with `cargo run -- --leaderboard http://localhost:8081/api/sudoku`.
+
+To put the web version on the site next to mahjong (`mindbird.site/sudoku/`):
+
+```bash
+bash web/export.sh ../pano-gallery/sudoku
+```
+
 ## Best times
 
 Every board you start is recorded, and solving one keeps its best time with that
@@ -208,7 +255,7 @@ size picked: each level's best time, `STARTED` if it was begun but not solved, o
 
 ## Saved settings
 
-The level, size, colour scheme, scanlines, font, mute, the board in progress and the
+The daily nickname, level, size, colour scheme, scanlines, font, mute, the board in progress and the
 best times are saved as
 `key=value` lines: `%APPDATA%\rusty-sudoku\settings.txt` on Windows, localStorage
 (`rusty-sudoku-settings`) on the web.
@@ -222,4 +269,6 @@ cargo run --release -- --shot new.png --size 315x560 --demo --new-dialog
 cargo run --release -- --shot notes.png --size 315x560 --demo --pick 4 --notes
 cargo run --release -- --shot touch.png --size 315x560 --demo --touch
 cargo run --release -- --shot serif.png --size 315x560 --demo --font serif --theme-dialog
+cargo run --release -- --shot daily.png --size 315x560 --daily-dialog
+cargo run --release -- --shot win.png --size 315x560 --daily-win 171.4 --name SAVVA
 ```

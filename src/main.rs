@@ -1,8 +1,10 @@
 #![allow(dead_code)]
 
+mod daily;
 mod fb;
 mod font;
 mod game;
+mod net;
 mod palette;
 mod settings;
 mod sudoku;
@@ -98,6 +100,11 @@ async fn main() {
     let scheme = schemes.iter().position(|s| s.name.eq_ignore_ascii_case(&saved.colours)).unwrap_or(0);
     let mut game = game::Game::new(schemes, scheme);
     game.crt = saved.crt.unwrap_or(true);
+    // `--name NAME` fills in the daily leaderboard nickname.
+    game.nickname = arg("--name").unwrap_or_else(|| saved.name.clone());
+    // `--leaderboard URL` sends daily times somewhere else (e.g. the local
+    // test server, web/dev-server.js).
+    game.leaderboard = Some(arg("--leaderboard").unwrap_or_else(|| daily::DEFAULT_URL.to_string()));
     game.font = font::Style::by_name(&saved.font).unwrap_or_default();
     game.muted = saved.muted.unwrap_or(false);
     let level = arg("--level").and_then(|l| l.parse().ok()).or(saved.level).unwrap_or(0);
@@ -122,6 +129,21 @@ async fn main() {
     }
     if flag("--theme-dialog") {
         game.open_theme_dialog();
+    }
+    // `--daily-dialog` opens the daily dialog, its leaderboard loaded (screenshots).
+    if flag("--daily-dialog") {
+        game.open_daily();
+        game.finish_dialog_typing();
+        #[cfg(not(target_arch = "wasm32"))]
+        game.settle_requests();
+    }
+    // `--daily-win SECONDS [--submit]` shows today's board as just solved, at
+    // the nickname entry (with --submit, after sending it). Screenshots only.
+    if let Some(secs) = arg("--daily-win").and_then(|s| s.parse::<f32>().ok()).filter(|_| shot.is_some()) {
+        game.demo_daily_win(secs);
+        if flag("--submit") {
+            game.submit_demo();
+        }
     }
     if flag("--new-dialog") {
         game.open_new_dialog();
