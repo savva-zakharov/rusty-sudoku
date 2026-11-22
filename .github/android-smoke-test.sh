@@ -29,7 +29,17 @@ if [ -z "$pid" ]; then
     tail -n 80 "logcat-$API.txt"
     exit 1
 fi
-if grep -qE "FATAL EXCEPTION|panicked|Fatal signal" "logcat-$API.txt"; then
+# A known harmless panic: on its first launch after install, Android 15
+# relaunches the activity, macroquad makes a new sound context, and quad-snd's
+# old audio thread panics on its now-closed message channel
+# (opensles_snd.rs, `rx1.recv().unwrap()`, RecvError) as it ends. The game
+# and its new audio thread carry on, so that one isn't counted as a crash;
+# any other panic still is.
+benign='quad-snd-[0-9.]+/src/opensles_snd\.rs'
+if grep -E "panicked" "logcat-$API.txt" | grep -qE "$benign"; then
+    echo "::notice::Ignoring quad-snd's old audio thread ending after the activity was relaunched (API $API)"
+fi
+if grep -E "FATAL EXCEPTION|panicked|Fatal signal" "logcat-$API.txt" | grep -vqE "$benign"; then
     echo "::error::The game crashed on API $API"
     exit 1
 fi
