@@ -50,6 +50,7 @@ async fn main() {
     let scheme = schemes.iter().position(|s| s.name.eq_ignore_ascii_case(&saved.colours)).unwrap_or(0);
     let mut game = game::Game::new(schemes, scheme);
     game.crt = saved.crt.unwrap_or(true);
+    game.font = font::Style::by_name(&saved.font).unwrap_or_default();
     game.muted = saved.muted.unwrap_or(false);
     let level = arg("--level").and_then(|l| l.parse().ok()).or(saved.level).unwrap_or(0);
     let seed = arg("--seed").and_then(|s| s.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().ok());
@@ -66,6 +67,14 @@ async fn main() {
     game.set_input(flag("--notes"), arg("--pick").and_then(|d| d.parse().ok()));
     // `--touch` shows the swipe pad's legend, as after a touch (for screenshots).
     game.touch_seen = flag("--touch");
+    // `--font NAME` picks the text style; `--theme-dialog` opens the theme
+    // dialog (both for screenshots).
+    if let Some(f) = arg("--font").and_then(|f| font::Style::by_name(&f)) {
+        game.font = f;
+    }
+    if flag("--theme-dialog") {
+        game.open_theme_dialog();
+    }
     if flag("--new-dialog") {
         game.open_new_dialog();
     }
@@ -122,7 +131,7 @@ async fn main() {
         let bg = game.palette()[palette::BG as usize];
         clear_background(Color::from_rgba(bg[0], bg[1], bg[2], 255));
         draw_texture_ex(&tex, ox, oy, WHITE, DrawTextureParams { dest_size: Some(vec2(w as f32 * s, h as f32 * s)), ..Default::default() });
-        if game.crt && s >= 2.0 {
+        if game.scanlines() && s >= 2.0 {
             let lh = (s / 3.0).max(1.0).floor();
             let col = Color::new(0.0, 0.0, 0.0, 0.38);
             for r in 0..h {

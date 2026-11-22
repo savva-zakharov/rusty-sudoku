@@ -28,26 +28,31 @@ Open `http://<this-machine's-LAN-IP>:8081` on a phone on the same network.
 
 The base screen is 315 x 560 in portrait (9:16). Taller screens add rows: the
 extra height goes evenly above and below the board. In landscape the screen is
-560 x 315 (wider screens add columns), with the board on the left and a panel
-on the right holding the board's name, the digits, the command line and the controls.
+560 x 315 (wider screens add columns): the HUD on one line with the board's name
+and stats, the board on the left, and on the right the number and notes keypads
+at the top, the swipe pad under them and the command line; the control bar runs
+in one row across the bottom.
 
 - **Board**: 46 x 28 box drawing characters. Double lines (`╔═╦╬║`) round the edge
   and between the 3x3 boxes, single lines (`─│┼`) between cells. The glyphs fill
   their whole 6x10 text cell, so they join up (`src/font.rs`, `boxch`).
-- **Digits**: square buttons the size of a board cell, drawn with shared single
-  lines like the board: a row of 9 (or 6) under the board in portrait, a 3-wide
-  keypad in landscape. Each previews what tapping it puts on the board: a big
-  digit, or in notes mode (green lines) a small digit in that note's place in a
-  cell. The digit in focus (picked in fast mode, or the selected cell's) shows as it
-  does on the board, amber on dark amber, outlined in amber. Finished digits are
-  dimmed. How many are left shows under each button in portrait, and in its corner
-  in landscape (not in notes mode).
+- **Number and notes rows**: square buttons the size of a board cell, with double
+  lines round each row and single lines between, like the board. The number row
+  shows big digits (and in each corner how many are left); the notes row under it
+  shows each digit small, in that note's place in a cell. In landscape they're two
+  3-wide keypads side by side. The row in use (notes mode or not) has bright double
+  lines. The digit in focus (picked in fast mode, or the selected cell's) shows in
+  its row as on the board: amber on dark amber, outlined in amber. Finished digits
+  are dimmed.
 - **Command line** (`>`): what happened, typed out with click sounds.
-- **Control bar**: `[U]NDO`, `[E]RASE`, `[N]OTES`, `[F]AST`, `[H]INT`, `[T]HEME`, `NE[W]`.
+- **Control bar**: `[U]NDO`, `[E]RASE`, `[N]OTES`, `[F]AST`, `[H]INT`, `[T]HEME`, `NE[W]`,
+  `[M]UTE` (red while the sound is off). Two rows of four in portrait, one row in
+  landscape.
 
 ## Playing
 
-Tap a cell, then a digit. Tapping the same digit again clears it. Tapping the
+Tap a cell, then a number in the number row to place it, or in the notes row to
+note it (each tap sets notes mode to match its row). Tapping the same digit again clears it. Tapping the
 selected cell again lets it go. Tapping a digit with no cell selected switches to
 `[F]AST` mode with that digit picked. A digit that
 repeats in its row, column or box turns red (with the digit it clashes with) and
@@ -61,8 +66,10 @@ Placing a right digit removes it from the notes in its row, column and box.
 lit), then every tap on an open cell places it, or toggles it as a note while
 `[N]OTES` is on. Cells that already hold another digit are left alone (erase it first); tapping a
 cell that holds the picked digit clears it; tapping a
-given cell just selects it. Tap the lit digit (or press its key) again to switch `[N]OTES` on or off for it;
-a third time puts it down and sets notes back. Once all nine of the picked digit are
+given cell just selects it. Tap the same digit in the other row to switch between placing and noting it, or
+the same button again to put it down. On a keyboard, pressing the picked digit's
+key again switches `[N]OTES` on or off for it, and a third time puts it down and
+sets notes back. Once all nine of the picked digit are
 on the board with no clashes, fast mode moves on to the next digit that still has cells to fill. The picked
 digit's cells and notes are highlighted across the board. On a keyboard, digit keys
 pick the digit and `Enter` places it in the selected cell.
@@ -87,7 +94,7 @@ there works too): swipe left / right for the next / previous digit still to plac
 | `Enter` | fast mode: place the picked digit in the selected cell |
 | `U` / `Z` | undo |
 | `H` | hint |
-| `T` | colours and CRT scanlines |
+| `T` | theme: colours, CRT scanlines and font |
 | `W` | new board |
 | `M` | mute |
 | `C` | scanlines on or off |
@@ -129,6 +136,21 @@ level's rule still solves the board (`src/sudoku.rs`). The `NE[W]` dialog picks 
 level (`<` / `>`), the size (`[S]IZE`) and the seed: `[T]ODAY`, `[R]ANDOM`, or type digits (the on-screen
 digit row types them too).
 
+## Theme
+
+`[T]HEME` opens the theme dialog. `<` / `>` step through the colour schemes, `[C]RT`
+switches the scanlines and `[F]ONT` steps through the text styles; the screen shows
+each change at once, and `[A]CCEPT` keeps them (`[E]XIT` goes back).
+
+| Font | Look |
+| --- | --- |
+| STANDARD | the 5x7 terminal font |
+| LARGE | taller 5x9 letters and digits (the layout keeps its 6x10 character grid) |
+| SERIF | the 5x7 shapes with serifs: feet on stems, ticks at the ends of bars |
+
+The font is used for all text and the board's and buttons' digits; the small note
+digits keep their own font.
+
 ## Best times
 
 Every board you start is recorded, and solving one keeps its best time with that
@@ -140,7 +162,7 @@ size picked: each level's best time, `STARTED` if it was begun but not solved, o
 
 ## Saved settings
 
-The level, size, colour scheme, scanlines, mute, the board in progress and the
+The level, size, colour scheme, scanlines, font, mute, the board in progress and the
 best times are saved as
 `key=value` lines: `%APPDATA%\rusty-sudoku\settings.txt` on Windows, localStorage
 (`rusty-sudoku-settings`) on the web.
@@ -153,4 +175,5 @@ cargo run --release -- --shot six.png --size 315x560 --six --demo
 cargo run --release -- --shot new.png --size 315x560 --demo --new-dialog
 cargo run --release -- --shot notes.png --size 315x560 --demo --pick 4 --notes
 cargo run --release -- --shot touch.png --size 315x560 --demo --touch
+cargo run --release -- --shot serif.png --size 315x560 --demo --font serif --theme-dialog
 ```

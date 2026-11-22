@@ -14,6 +14,8 @@ pub struct Settings {
     pub size: Option<usize>,
     pub colours: String,
     pub crt: Option<bool>,
+    /// Text style name (font::Style::name).
+    pub font: String,
     pub muted: Option<bool>,
     /// The board in progress (see `Game::save_board`).
     pub board: String,
@@ -33,6 +35,7 @@ impl Settings {
                 "size" => s.size = v.parse().ok(),
                 "colours" => s.colours = v,
                 "crt" => s.crt = v.parse().ok(),
+                "font" => s.font = v,
                 "muted" => s.muted = v.parse().ok(),
                 "board" => s.board = v,
                 "game" => s.games.push(v),
@@ -44,6 +47,9 @@ impl Settings {
 
     pub fn text(&self) -> String {
         let mut t = format!("colours={}\n", self.colours);
+        if !self.font.is_empty() {
+            t += &format!("font={}\n", self.font);
+        }
         if let Some(l) = self.level {
             t += &format!("level={l}\n");
         }
@@ -144,7 +150,7 @@ mod tests {
 
     #[test]
     fn settings_survive_a_round_trip() {
-        let s = Settings { level: Some(3), size: Some(6), colours: "AMBER".into(), crt: Some(false), muted: Some(true), board: "20261121.1.abc".into(), games: vec!["a".into(), "b".into()] };
+        let s = Settings { level: Some(3), size: Some(6), colours: "AMBER".into(), crt: Some(false), font: "SERIF".into(), muted: Some(true), board: "20261121.1.abc".into(), games: vec!["a".into(), "b".into()] };
         assert_eq!(Settings::parse(&s.text()), s);
     }
 }

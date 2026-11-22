@@ -1,6 +1,7 @@
 //! The game: board state, input, the portrait and landscape layouts, drawing.
 
 use crate::fb::{Fb, CW, LH};
+use crate::font::{Style, STYLES};
 use crate::palette::*;
 use crate::sudoku::{self, Grid, Reason, Shape, LEVELS, NINE, SHAPES};
 use macroquad::audio::{play_sound, PlaySoundParams, Sound};
@@ -169,16 +170,22 @@ enum Action {
     ThemeAccept,
     ThemeExit,
     SolvedClose,
+    /// Theme dialog: the next text style.
+    Font,
     /// New-board dialog: switch between 9x9 and 6x6.
     Size,
+    /// A tap on the number row (place the digit) or the notes row (note it).
+    Num(u8),
+    Note(u8),
     /// Fast mode: pick the next (1) or previous (-1) digit still to place.
     CycleDigit(i32),
     /// New-board dialog: pick a level by its row in the best times table.
     PickLevel(usize),
 }
 
-/// The control bar, under the digits.
-const BAR: [(&str, Action); 7] = [
+/// The control bar along the bottom: two rows of four in portrait, one row
+/// across the whole screen in landscape.
+const BAR: [(&str, Action); 8] = [
     ("[U]NDO", Action::Undo),
     ("[E]RASE", Action::Erase),
     ("[N]OTES", Action::Notes),
@@ -186,6 +193,7 @@ const BAR: [(&str, Action); 7] = [
     ("[H]INT", Action::Hint),
     ("[T]HEME", Action::Theme),
     ("NE[W]", Action::New),
+    ("[M]UTE", Action::Mute),
 ];
 
 type Rect = (i32, i32, i32, i32);
@@ -249,21 +257,16 @@ struct Layout {
     /// Top-left of the board text.
     gx: i32,
     gy: i32,
-    /// The digit buttons: square cells the size of a 9x9 board cell, sharing
-    /// their lines like the board's. In a row under the board in portrait, a
-    /// keypad (3 across) in landscape. `pad` is the top-left of its text and
-    /// `pad_text` the text; `digits` the top-left of each cell (as `cell_rect`).
-    pad: (i32, i32),
-    pad_text: Vec<String>,
-    digits: Vec<(i32, i32)>,
-    digit_hits: Vec<Rect>,
+    /// The number row and, under it, the notes row: square cells the size of
+    /// a 9x9 board cell, double lines round the edge and single ones between,
+    /// like the board. Rows under the board in portrait; keypads (3 across)
+    /// side by side in landscape.
+    pads: [Pad; 2],
     hud_rule: i32,
     prompt: (i32, i32),
     /// The dashed rule over the control bar: y, and the x range it spans.
     rule: (i32, i32, i32),
     bar: Vec<Button>,
-    /// Landscape: the info panel's left edge and top.
-    panel: (i32, i32),
     /// Rows behind which the dot lattice is drawn: (x0, y0, x1, y1).
     lattice: Rect,
     /// The swipe pad: the empty area under the digits, where swipes pick the
@@ -301,17 +304,19 @@ impl Layout {
     fn portrait(w: i32, h: i32, g: Geom) -> Layout {
         let (gw, gh, n) = (g.w(), g.h(), g.s.n as i32);
         let hud_rule = 25;
-        let rule_y = h - 24;
+        let rule_y = h - 36;
         let prompt_y = rule_y - 14;
-        let block = gh + 6 + PAD_H + 9;
+        let block = gh + 6 + 2 * PAD_H + 4;
         let top = hud_rule + 5;
         let free = (prompt_y - 6 - top - block).max(0);
         let gy = top + free / 2;
         let gx = (w - gw) / 2;
-        // The digits in one row of square cells under the board.
+        // The number row under the board, the notes row under that.
         let cols = n as usize;
-        let pad = ((w - pad_w(cols)) / 2, gy + gh + 6);
-        let (pad_text, digits, digit_hits) = keypad(pad, cols, 1, n as usize);
+        let x = (w - pad_w(cols)) / 2;
+        let nums = keypad((x, gy + gh + 6), cols, 1, cols);
+        let notes = keypad((x, nums.bottom()), cols, 1, cols);
+        let swipe_top = notes.bottom() + 4;
         Layout {
             w,
             h,
@@ -320,17 +325,13 @@ impl Layout {
             grid_text: grid_lines(g),
             gx,
             gy,
-            pad,
-            pad_text,
-            digits,
-            digit_hits,
+            pads: [nums, notes],
             hud_rule,
             prompt: (4, prompt_y),
             rule: (rule_y, 0, w),
-            bar: grid_buttons(&BAR, (0, rule_y + 1, w, h - rule_y - 1), 7),
-            panel: (0, 0),
-            lattice: (0, hud_rule + 3, w, prompt_y - 5),
-            swipe: (0, pad.1 + PAD_H + 9, w, rule_y - (pad.1 + PAD_H + 9)),
+            bar: grid_buttons(&BAR, (0, rule_y + 1, w, h - rule_y - 1), 4),
+            lattice: (0, hud_rule + 3, w, rule_y - 2),
+            swipe: (0, swipe_top, w, rule_y - swipe_top),
         }
     }
 
@@ -339,24 +340,28 @@ impl Layout {
     /// controls in two rows.
     fn landscape(w: i32, h: i32, g: Geom) -> Layout {
         let (gw, gh, n) = (g.w(), g.h(), g.s.n as i32);
+        // The HUD on one line (the board's name and stats in it), the control
+        // bar in one row across the bottom.
         let hud_rule = 13;
-        let gy = hud_rule + (h - hud_rule - gh) / 2;
+        let rule_y = h - 18;
+        let gy = hud_rule + (rule_y - hud_rule - gh) / 2;
         // The panel starts where it would beside a 9x9 board, so it doesn't
         // jump about between sizes.
         let pw = 256;
         let x0 = (w - (Geom::of(NINE).w() + 16 + pw)) / 2;
         let gx = x0.max(4) + (Geom::of(NINE).w() - gw) / 2;
         let px = x0.max(4) + Geom::of(NINE).w() + 16;
-        let top = hud_rule + 11;
-        let rule_y = h - 40;
-        let prompt_y = rule_y - 14;
-        // The digits as a keypad, three across, between the stats and the
+        let prompt_y = rule_y - 13;
+        // Number and notes keypads, three across, side by side at the top of
+        // the panel, level with the board; below them the swipe pad, then the
         // command line.
         let rows = n as usize / 3;
-        let ph = (rows * 3 + 1) as i32 * LH;
-        let info_end = top + 66;
-        let pad = (px + (pw - pad_w(3)) / 2, info_end + (prompt_y - 6 - info_end - ph) / 2);
-        let (pad_text, digits, digit_hits) = keypad(pad, 3, rows, n as usize);
+        let gap = 12;
+        let x = px + (pw - (2 * pad_w(3) + gap)) / 2;
+        let y = hud_rule + (rule_y - hud_rule - Geom::of(NINE).h()) / 2;
+        let nums = keypad((x, y), 3, rows, n as usize);
+        let notes = keypad((x + pad_w(3) + gap, y), 3, rows, n as usize);
+        let swipe_top = nums.bottom() + 2;
         Layout {
             w,
             h,
@@ -365,17 +370,13 @@ impl Layout {
             grid_text: grid_lines(g),
             gx,
             gy,
-            pad,
-            pad_text,
-            digits,
-            digit_hits,
+            pads: [nums, notes],
             hud_rule,
             prompt: (px, prompt_y),
-            rule: (rule_y, px - 4, px + pw + 4),
-            bar: grid_buttons(&BAR, (px - 4, rule_y + 1, pw + 8, h - rule_y - 1), 4),
-            panel: (px, top),
-            lattice: (0, hud_rule + 3, px - 8, h),
-            swipe: (px - 4, pad.1 + ph + 2, pw + 8, rule_y - (pad.1 + ph + 2)),
+            rule: (rule_y, 0, w),
+            bar: grid_buttons(&BAR, (0, rule_y + 1, w, h - rule_y - 1), BAR.len()),
+            lattice: (0, hud_rule + 3, w, rule_y - 2),
+            swipe: (px - 4, swipe_top, pw + 8, prompt_y - 4 - swipe_top),
         }
     }
 
@@ -421,6 +422,22 @@ fn swipe_action(dx: f32, dy: f32) -> Option<Action> {
 /// Height of a one-row digit strip: a line, two text lines, a line.
 const PAD_H: i32 = 4 * LH;
 
+/// A keypad of square digit buttons: the top-left of its text, the text, each
+/// cell's top-left (laid out like a board cell, 30 pixels apart) and each
+/// cell's hit area.
+struct Pad {
+    at: (i32, i32),
+    text: Vec<String>,
+    cells: Vec<(i32, i32)>,
+    hits: Vec<Rect>,
+}
+
+impl Pad {
+    fn bottom(&self) -> i32 {
+        self.at.1 + self.text.len() as i32 * LH
+    }
+}
+
 /// Width of a digit keypad `cols` cells across (5 characters a cell, plus
 /// the closing line).
 fn pad_w(cols: usize) -> i32 {
@@ -428,10 +445,8 @@ fn pad_w(cols: usize) -> i32 {
 }
 
 /// A keypad of `count` square cells, `cols` across and `rows` down, with its
-/// top-left at `at`: its box drawing text (single lines, shared between
-/// cells), each cell's top-left (laid out like a board cell, 30 pixels apart)
-/// and each cell's hit area (the whole square up to the lines).
-fn keypad(at: (i32, i32), cols: usize, rows: usize, count: usize) -> (Vec<String>, Vec<(i32, i32)>, Vec<Rect>) {
+/// top-left at `at`: double lines round the edge, single lines between cells.
+fn keypad(at: (i32, i32), cols: usize, rows: usize, count: usize) -> Pad {
     let mut text = vec![];
     for line in 0..rows * 3 + 1 {
         let border = line % 3 == 0;
@@ -442,17 +457,17 @@ fn keypad(at: (i32, i32), cols: usize, rows: usize, count: usize) -> (Vec<String
             let (left, right) = (col == 0, col == cols * 5);
             s.push(match (border, on_v) {
                 (false, false) => ' ',
-                (false, true) => '│',
-                (true, false) => '─',
+                (false, true) => if left || right { '║' } else { '│' },
+                (true, false) => if first || last { '═' } else { '─' },
                 (true, true) => match (first, last, left, right) {
-                    (true, _, true, _) => '┌',
-                    (true, _, _, true) => '┐',
-                    (_, true, true, _) => '└',
-                    (_, true, _, true) => '┘',
-                    (true, _, _, _) => '┬',
-                    (_, true, _, _) => '┴',
-                    (_, _, true, _) => '├',
-                    (_, _, _, true) => '┤',
+                    (true, _, true, _) => '╔',
+                    (true, _, _, true) => '╗',
+                    (_, true, true, _) => '╚',
+                    (_, true, _, true) => '╝',
+                    (true, _, _, _) => '╤',
+                    (_, true, _, _) => '╧',
+                    (_, _, true, _) => '╟',
+                    (_, _, _, true) => '╢',
                     _ => '┼',
                 },
             });
@@ -461,7 +476,7 @@ fn keypad(at: (i32, i32), cols: usize, rows: usize, count: usize) -> (Vec<String
     }
     let cells: Vec<(i32, i32)> = (0..count).map(|k| (at.0 + (k % cols) as i32 * 30, at.1 + (k / cols) as i32 * 30)).collect();
     let hits = cells.iter().map(|&(x, y)| (x + 2, y + 4, 31, 31)).collect();
-    (text, cells, hits)
+    Pad { at, text, cells, hits }
 }
 
 /// The board as lines of box drawing characters: double lines round the
@@ -607,7 +622,7 @@ enum Dialog {
     /// New board: the level being picked, the seed digits typed so far.
     New { level: usize, shape: Shape, seed: String, typer: Typer },
     /// Colour scheme and scanlines being tried (shown live).
-    Theme { scheme: usize, crt: bool, typer: Typer },
+    Theme { scheme: usize, crt: bool, font: Style, typer: Typer },
     Solved,
 }
 
@@ -709,6 +724,7 @@ pub struct Game {
     schemes: Vec<Scheme>,
     scheme: usize,
     pub crt: bool,
+    pub font: Style,
     pub muted: bool,
     pub sounds: Sounds,
     /// A sound already played this frame (at most one per frame).
@@ -755,6 +771,7 @@ impl Game {
             schemes,
             scheme,
             crt: true,
+            font: Style::Standard,
             muted: false,
             sounds: Sounds::default(),
             sounded: false,
@@ -779,6 +796,14 @@ impl Game {
         match &self.dialog {
             Some(Dialog::Theme { crt, .. }) => *crt,
             _ => self.crt,
+        }
+    }
+
+    /// The text style: the one being tried while the theme dialog is open.
+    fn font_now(&self) -> Style {
+        match &self.dialog {
+            Some(Dialog::Theme { font, .. }) => *font,
+            _ => self.font,
         }
     }
 
@@ -886,6 +911,7 @@ impl Game {
             size: Some(self.shape.n),
             colours: self.schemes[self.scheme].name.clone(),
             crt: Some(self.crt),
+            font: self.font.name().to_string(),
             muted: Some(self.muted),
             board: self.save_board(),
             games: self.records.iter().map(Record::text).collect(),
@@ -1045,21 +1071,21 @@ impl Game {
 
     /// What a tap or click at (mx, my) would do.
     fn target_at(&self, mx: i32, my: i32) -> Option<Action> {
-        let digit = || self.lay.digit_hits.iter().position(|&r| in_rect(mx, my, r)).map(|k| Action::Digit(k as u8 + 1));
+        let at = |p: usize| self.lay.pads[p].hits.iter().position(|&r| in_rect(mx, my, r)).map(|k| k as u8 + 1);
         if let Some(v) = self.view() {
             if let Some(b) = v.buttons.iter().find(|b| in_rect(mx, my, b.hit)) {
                 return Some(b.action);
             }
-            // The digit buttons type the seed in the new-board dialog.
+            // The number buttons type the seed in the new-board dialog.
             if matches!(self.dialog, Some(Dialog::New { .. })) {
-                return digit();
+                return at(0).map(Action::Digit);
             }
             return None;
         }
         if let Some(b) = self.lay.bar.iter().find(|b| in_rect(mx, my, b.hit)) {
             return Some(b.action);
         }
-        digit().or_else(|| self.lay.cell_at(mx, my).map(Action::Select))
+        at(0).map(Action::Num).or_else(|| at(1).map(Action::Note)).or_else(|| self.lay.cell_at(mx, my).map(Action::Select))
     }
 
     fn keys(&self) -> Vec<Action> {
@@ -1091,6 +1117,7 @@ impl Game {
                 map(&[Left, Up], Action::ThemePrev);
                 map(&[Right, Down], Action::ThemeNext);
                 map(&[C], Action::Crt);
+                map(&[F], Action::Font);
                 map(&[A, Y, Enter, KpEnter, Space], Action::ThemeAccept);
                 map(&[E, N, Escape, Backspace], Action::ThemeExit);
             }
@@ -1228,7 +1255,7 @@ impl Game {
             Action::Theme => {
                 let mut typer = Typer::default();
                 typer.t = 0.0;
-                self.dialog = Some(Dialog::Theme { scheme: self.scheme, crt: self.crt, typer });
+                self.dialog = Some(Dialog::Theme { scheme: self.scheme, crt: self.crt, font: self.font, typer });
             }
             Action::New => {
                 let level = if self.solved { (self.level + 1).min(LEVELS.len() - 1) } else { self.level };
@@ -1242,6 +1269,8 @@ impl Game {
                 }
             }
             Action::CycleDigit(step) => self.cycle_digit(step),
+            Action::Num(d) => self.tap_digit(d, false),
+            Action::Note(d) => self.tap_digit(d, true),
             Action::PickLevel(k) => {
                 if let Some(Dialog::New { level, typer, .. }) = &mut self.dialog {
                     if *level != k {
@@ -1284,10 +1313,17 @@ impl Game {
                     *typer = Typer::default();
                 }
             }
+            Action::Font => {
+                if let Some(Dialog::Theme { font, .. }) = &mut self.dialog {
+                    let k = STYLES.iter().position(|s| s == font).unwrap_or(0);
+                    *font = STYLES[(k + 1) % STYLES.len()];
+                }
+            }
             Action::ThemeAccept => {
-                if let Some(Dialog::Theme { scheme, crt, .. }) = self.dialog.take() {
+                if let Some(Dialog::Theme { scheme, crt, font, .. }) = self.dialog.take() {
                     self.scheme = scheme;
                     self.crt = crt;
+                    self.font = font;
                     let m = format!("COLOURS {}", self.schemes[scheme].name);
                     self.say(&m);
                 }
@@ -1295,6 +1331,38 @@ impl Game {
             Action::ThemeExit | Action::SolvedClose => self.dialog = None,
         }
         true
+    }
+
+    /// A tap on the number row (`notes` false) or the notes row: notes mode
+    /// follows the row. In fast mode it picks the digit, or switches between
+    /// placing and noting it, or (the same button again) puts it down; with no
+    /// cell selected it starts fast mode; otherwise it writes in the cell.
+    fn tap_digit(&mut self, d: u8, notes: bool) {
+        if d as usize > self.shape.n {
+            return;
+        }
+        let switched = self.notes_mode != notes;
+        self.notes_mode = notes;
+        let verb = if notes { "NOTING" } else { "PLACING" };
+        if self.fast {
+            self.fast_toggled = false;
+            if self.fast_digit == Some(d) && !switched {
+                self.fast_digit = None;
+                self.say("NO DIGIT PICKED");
+            } else {
+                self.fast_digit = Some(d);
+                let m = format!("{verb} {d}S");
+                self.say(&m);
+            }
+        } else if self.sel.is_none() && !self.solved {
+            self.fast = true;
+            self.fast_digit = Some(d);
+            self.fast_toggled = false;
+            let m = format!("FAST ON: {verb} {d}S");
+            self.say(&m);
+        } else {
+            self.enter(d);
+        }
     }
 
     /// Pick the digit `step` along from the current one (wrapping), skipping
@@ -1400,6 +1468,15 @@ impl Game {
         self.placed(i);
         let m = format!("{} = {d}", cell_name(self.shape, i));
         self.say(&m);
+    }
+
+    /// Open the theme dialog with its scheme name typed out (`--theme-dialog`).
+    pub fn open_theme_dialog(&mut self) {
+        self.run(Action::Theme);
+        let name = self.schemes[self.scheme].name.clone();
+        if let Some(Dialog::Theme { typer, .. }) = &mut self.dialog {
+            typer.finish(&name);
+        }
     }
 
     /// Open the new-board dialog with its level name typed out (`--new-dialog`).
@@ -1648,15 +1725,18 @@ impl Game {
                 buttons.extend(row_buttons(&[("[Y]ES", Action::NewYes), ("[N]O", Action::NewNo)], cx, y + 186));
                 View { rect: r, title: "NEW BOARD?", count: Some(format!("{}/{}", level + 1, LEVELS.len())), els, buttons }
             }
-            Dialog::Theme { scheme, crt, typer } => {
-                let r @ (_, y, _, _) = make(100);
+            Dialog::Theme { scheme, crt, font, typer } => {
+                let r @ (_, y, _, _) = make(120);
                 let mut els = typed(y + 32, &self.schemes[*scheme].name, typer);
-                let lx = cx - 30;
-                els.push(El::Text(lx + 36, y + 50, if *crt { "ON".into() } else { "OFF".into() }, AMBER));
+                // [C]RT and [F]ONT rows: the labels are buttons; their values here.
+                let lx = cx - 42;
+                els.push(El::Text(lx + 42, y + 50, if *crt { "ON".into() } else { "OFF".into() }, AMBER));
+                els.push(El::Text(lx + 42, y + 66, font.name().into(), AMBER));
                 let mut buttons = arrows(y + 32, Action::ThemePrev, Action::ThemeNext);
-                buttons.push(Button { label: "[C]RT", action: Action::Crt, text_x: lx, text_y: y + 50, hit: (lx - 30, y + 44, 90, 19) });
-                buttons.extend(row_buttons(&[("[A]CCEPT", Action::ThemeAccept), ("[E]XIT", Action::ThemeExit)], cx, y + 78));
-                View { rect: r, title: "COLOURS", count: Some(format!("{}/{}", scheme + 1, self.schemes.len())), els, buttons }
+                buttons.push(Button { label: "[C]RT", action: Action::Crt, text_x: lx, text_y: y + 50, hit: (lx - 30, y + 44, 130, 16) });
+                buttons.push(Button { label: "[F]ONT", action: Action::Font, text_x: lx, text_y: y + 66, hit: (lx - 30, y + 60, 130, 16) });
+                buttons.extend(row_buttons(&[("[A]CCEPT", Action::ThemeAccept), ("[E]XIT", Action::ThemeExit)], cx, y + 96));
+                View { rect: r, title: "THEME", count: Some(format!("{}/{}", scheme + 1, self.schemes.len())), els, buttons }
             }
             Dialog::Solved => {
                 let r @ (_, y, _, _) = make(100);
@@ -1679,6 +1759,7 @@ impl Game {
 
     pub fn render(&self, fb: &mut Fb) {
         let l = &self.lay;
+        fb.font = self.font_now();
         fb.clear(BG);
 
         // Dot lattice on the "desk", as in rusty-majong.
@@ -1691,7 +1772,7 @@ impl Game {
         }
         fb.rect(l.gx, l.gy, l.geom.w(), l.geom.h(), BG);
         self.render_board(fb);
-        self.render_digits(fb);
+        self.render_pads(fb);
         self.render_hud(fb);
         // On touch screens, a legend for the swipe pad.
         if self.touch_seen && self.dialog.is_none() {
@@ -1794,74 +1875,78 @@ impl Game {
         }
     }
 
-    /// The digit buttons. Each previews what tapping it puts on the board: a
-    /// big digit, or in notes mode (green lines) a small one where that note
-    /// goes in a cell. The focused digit (picked in fast mode, else the
-    /// selected cell's) looks as it does on the board: amber on dark amber,
-    /// with an amber outline. Finished digits are dimmed. How many of each are
-    /// left shows under the row in portrait, in the cell's corner in landscape
-    /// (not in notes mode, where the corners hold notes). While the new-board
-    /// dialog is open the buttons type seed digits.
-    fn render_digits(&self, fb: &mut Fb) {
+    /// The number and notes rows. Each button previews what tapping it puts on
+    /// the board: a big digit, or a small one where that note goes in a cell.
+    /// The row in use (notes mode or not) has bright double lines. The focused
+    /// digit (picked in fast mode, else the selected cell's) shows in its row
+    /// as on the board: amber on dark amber, outlined in amber. Finished digits
+    /// are dimmed; how many of each are left shows in the number's corner.
+    /// While the new-board dialog is open the number row types seed digits.
+    fn render_pads(&self, fb: &mut Fb) {
         let l = &self.lay;
         let focus = self.focus_digit();
         let typing_seed = matches!(self.dialog, Some(Dialog::New { .. }));
-        let notes = self.notes_mode && !typing_seed;
         let note_rows = (self.shape.n / 3) as i32;
-        let (px, py) = l.pad;
-        let rows = l.pad_text.len() as i32;
-        fb.rect(px, py, l.pad_text[0].chars().count() as i32 * CW, rows * LH, BG);
-        for (k, &(x, y)) in l.digits.iter().enumerate() {
-            let d = k as u8 + 1;
-            let a = Action::Digit(d);
-            let placed = self.vals.iter().filter(|&&v| v == d).count();
-            let left = self.shape.n.saturating_sub(placed);
-            let (ix, iy, iw, ih) = (x + 4, y + 6, 27, 27);
-            let is_focus = !typing_seed && d == focus;
-            let done = !typing_seed && left == 0;
-            if typing_seed && self.pressed(a) {
-                fb.rect(ix, iy, iw, ih, AMBER);
-            } else if is_focus && !notes {
-                fb.rect(ix, iy, iw, ih, DKAMBER);
-            } else if !is_focus && self.hover == Some(a) {
-                fb.dither(ix, iy, iw, ih, UI_DK);
-            }
-            if notes {
-                // The note's own slot, as in a board cell.
-                let (sw, sh) = (iw / 3, ih / note_rows);
-                let kk = k as i32;
-                let (nx, ny) = (ix + (kk % 3) * sw, iy + (kk / 3) * sh);
-                if is_focus {
-                    fb.rect(nx, ny, sw, sh, DKAMBER);
+        // The row the focused digit shows in: the notes row only for a digit
+        // picked for noting in fast mode.
+        let focus_row = if self.fast && self.notes_mode { 1 } else { 0 };
+        for (p, pad) in l.pads.iter().enumerate() {
+            let is_notes = p == 1;
+            let active = if typing_seed { !is_notes } else { self.notes_mode == is_notes };
+            let rows = pad.text.len() as i32;
+            fb.rect(pad.at.0, pad.at.1, pad.text[0].chars().count() as i32 * CW, rows * LH, BG);
+            for (k, &(x, y)) in pad.cells.iter().enumerate() {
+                let d = k as u8 + 1;
+                let a = if typing_seed { Action::Digit(d) } else if is_notes { Action::Note(d) } else { Action::Num(d) };
+                let placed = self.vals.iter().filter(|&&v| v == d).count();
+                let left = self.shape.n.saturating_sub(placed);
+                let (ix, iy, iw, ih) = (x + 4, y + 6, 27, 27);
+                let is_focus = !typing_seed && p == focus_row && d == focus;
+                let done = !typing_seed && left == 0;
+                let flash = typing_seed && !is_notes && self.pressed(a);
+                if flash {
+                    fb.rect(ix, iy, iw, ih, AMBER);
+                } else if is_focus && !is_notes {
+                    fb.rect(ix, iy, iw, ih, DKAMBER);
+                } else if !is_focus && self.hover == Some(a) && !(typing_seed && is_notes) {
+                    fb.dither(ix, iy, iw, ih, UI_DK);
                 }
-                let c = if is_focus { AMBER } else if done { DIM } else { UI };
-                fb.tiny(nx + (sw - 3) / 2, ny + (sh - 5) / 2, &d.to_string(), c);
-            } else {
-                let c = if typing_seed && self.pressed(a) {
-                    BG
-                } else if is_focus {
-                    AMBER
-                } else if done {
-                    DIM
+                if is_notes {
+                    // The note's own slot, as in a board cell.
+                    let (sw, sh) = (iw / 3, ih / note_rows);
+                    let kk = k as i32;
+                    let (nx, ny) = (ix + (kk % 3) * sw, iy + (kk / 3) * sh);
+                    if is_focus {
+                        fb.rect(nx, ny, sw, sh, DKAMBER);
+                    }
+                    let c = if is_focus { AMBER } else if done || typing_seed { DIM } else { UI };
+                    fb.tiny(nx + (sw - 3) / 2, ny + (sh - 5) / 2, &d.to_string(), c);
                 } else {
-                    UI
-                };
-                fb.text2x(ix + (iw - 9) / 2, iy + (ih - 14) / 2, &d.to_string(), c);
-                if !done && !typing_seed && !l.portrait {
-                    fb.tiny(ix + 2, iy + 2, &left.to_string(), UI_DK);
+                    let c = if flash {
+                        BG
+                    } else if is_focus {
+                        AMBER
+                    } else if done {
+                        DIM
+                    } else {
+                        UI
+                    };
+                    fb.text2x(ix + (iw - 9) / 2, iy + (ih - 14) / 2, &d.to_string(), c);
+                    if !done && !typing_seed {
+                        fb.tiny(ix + 2, iy + 2, &left.to_string(), UI_DK);
+                    }
                 }
             }
-            if !done && !typing_seed && l.portrait {
-                fb.tiny(ix + (iw - 3) / 2, py + PAD_H + 2, &left.to_string(), UI_DK);
+            let major = if active { UI } else { UI_DK };
+            for (j, line) in pad.text.iter().enumerate() {
+                fb.boxes(pad.at.0, pad.at.1 + j as i32 * LH, line, major, UI_DK);
             }
-        }
-        let c = if notes { UI } else { UI_DK };
-        for (j, line) in l.pad_text.iter().enumerate() {
-            fb.boxes(px, py + j as i32 * LH, line, c, c);
-        }
-        // The focused digit's square, outlined over the shared lines.
-        if let Some(&(x, y)) = (focus as usize).checked_sub(1).and_then(|k| l.digits.get(k)).filter(|_| !typing_seed) {
-            fb.outline(x + 2, y + 4, 31, 31, AMBER);
+            // The focused button's outline, over the lines.
+            if let Some(&(x, y)) = (focus as usize).checked_sub(1).and_then(|k| pad.cells.get(k)) {
+                if !typing_seed && p == focus_row {
+                    fb.outline(x + 3, y + 5, 29, 29, AMBER);
+                }
+            }
         }
     }
 
@@ -1874,6 +1959,8 @@ impl Game {
         let time_x = w - 4 - Fb::text_w(&time) + 1;
         let left = self.vals.iter().filter(|&&d| d == 0).count();
         let scheme = format!("/ {}", self.schemes[self.scheme].name);
+        let name = self.board_name();
+        let short = name.strip_prefix("DAILY ").unwrap_or(&name).to_string();
         if l.portrait {
             if x + 6 + Fb::text_w(&scheme) + 8 <= time_x {
                 fb.text(x + 6, 4, &scheme, UI_DK);
@@ -1883,35 +1970,23 @@ impl Game {
             if self.is_daily() {
                 nx = fb.text(4, 15, "DAILY", AMBER) + 6;
             }
-            let name = self.board_name();
-            fb.text(nx, 15, name.strip_prefix("DAILY ").unwrap_or(&name), UI_DK);
+            fb.text(nx, 15, &short, UI_DK);
             let stats = format!("ERR {} | LEFT {left}", self.errors);
             fb.text(w - 4 - Fb::text_w(&stats) + 1, 15, &stats, UI);
         } else {
-            fb.text(x + 6, 4, &scheme, UI_DK);
-            fb.text(time_x, 4, &time, UI);
-            // The info panel: level, seed and stats.
-            let (px, py) = l.panel;
-            let lv = LEVELS[self.level].name;
-            fb.text2x(px, py + 2, lv, AMBER);
-            if self.shape != NINE {
-                fb.text(px + 2 * Fb::text_w(lv) + 6, py + 9, &self.shape.name(), UI_DK);
-            }
-            let seed = fmt_seed(&seed_str(self.seed));
+            // One line: title, the board's name (and the colours, if they
+            // fit), then the stats and time on the right.
+            let stats = format!("ERR {} | LEFT {left} | {time}", self.errors);
+            let stats_x = w - 4 - Fb::text_w(&stats) + 1;
+            let mut nx = x + 12;
             if self.is_daily() {
-                let x = fb.text(px, py + 22, "DAILY", AMBER);
-                fb.text(x + 6, py + 22, &seed, UI_DK);
-            } else {
-                let x = fb.text(px, py + 22, "SEED", UI_DK);
-                fb.text(x + 6, py + 22, &seed, UI_DK);
+                nx = fb.text(nx, 4, "DAILY", AMBER) + 6;
             }
-            for (k, (label, value)) in
-                [("LEFT", left.to_string()), ("ERRORS", self.errors.to_string()), ("HINTS", self.hints.to_string())].iter().enumerate()
-            {
-                let y = py + 38 + k as i32 * 10;
-                fb.text(px, y, label, UI_DK);
-                fb.text(px + 48, y, value, UI);
+            let nx = fb.text(nx, 4, &short, UI_DK);
+            if nx + 6 + Fb::text_w(&scheme) + 12 <= stats_x {
+                fb.text(nx + 6, 4, &scheme, UI_DK);
             }
+            fb.text(stats_x, 4, &stats, UI);
         }
         dashed(fb, l.hud_rule, 0, w);
 
@@ -1929,7 +2004,8 @@ impl Game {
         let modal = self.dialog.is_some();
         for b in &l.bar {
             let on = (b.action == Action::Notes && self.notes_mode) || (b.action == Action::Fast && self.fast);
-            let normal = if modal { DIM } else { UI_DK };
+            // MUTE shows in red while the sound is off.
+            let normal = if modal { DIM } else if b.action == Action::Mute && self.muted { RED } else { UI_DK };
             let hover = !modal && self.hover == Some(b.action);
             draw_button(fb, b.label, b.text_x, b.text_y, normal, hover, on || self.pressed(b.action));
         }
@@ -1973,7 +2049,7 @@ fn draw_view(fb: &mut Fb, v: &View, hover: Option<Action>, screen_w: i32) {
         }
     }
     for b in v.buttons.iter().filter(|b| !b.label.is_empty()) {
-        let normal = if matches!(b.action, Action::Crt | Action::Size | Action::SeedToday | Action::SeedRandom) { UI_DK } else { UI };
+        let normal = if matches!(b.action, Action::Crt | Action::Font | Action::Size | Action::SeedToday | Action::SeedRandom) { UI_DK } else { UI };
         draw_button(fb, b.label, b.text_x, b.text_y, normal, hover == Some(b.action), false);
     }
 }
@@ -2015,21 +2091,28 @@ mod tests {
         {
             let l = Layout::new(w, h, s);
             let (gw, gh) = (l.geom.w(), l.geom.h());
-            assert_eq!(l.digits.len(), s.n);
+            assert_eq!(l.pads[0].cells.len(), s.n);
+            assert_eq!(l.pads[1].cells.len(), s.n);
             assert!(l.gx >= 0 && l.gx + gw <= w, "{w}x{h} board x");
             assert!(l.gy > l.hud_rule && l.gy + gh <= h, "{w}x{h} board y");
-            let (dx, dy) = *l.digits.last().unwrap();
-            assert!(dx + 36 <= w && dy + 40 < l.prompt.1, "{w}x{h} digits");
-            // Digit buttons are square, and a tap in the middle hits the right one.
-            for (k, &(x, y, hw, hh)) in l.digit_hits.iter().enumerate() {
-                assert_eq!(hw, hh);
-                assert_eq!(l.digit_hits.iter().position(|&r| in_rect(x + hw / 2, y + hh / 2, r)), Some(k));
+            for pad in &l.pads {
+                let (dx, dy) = *pad.cells.last().unwrap();
+                assert!(dx + 36 <= w && dy + 40 < l.prompt.1, "{w}x{h} digits");
+                // Buttons are square, and a tap in the middle hits the right one
+                // (and nothing in the other row).
+                for (k, &(x, y, hw, hh)) in pad.hits.iter().enumerate() {
+                    assert_eq!(hw, hh);
+                    let mid = (x + hw / 2, y + hh / 2);
+                    let hits: Vec<usize> = l.pads.iter().flat_map(|p| p.hits.iter().enumerate().filter(|(_, &r)| in_rect(mid.0, mid.1, r)).map(|(k, _)| k)).collect();
+                    assert_eq!(hits, vec![k]);
+                }
             }
+            let dy = l.pads[0].cells[0].1;
             assert!(l.prompt.1 + 10 < l.rule.0, "{w}x{h} prompt");
             if l.portrait {
                 assert!(dy > l.gy + gh);
             } else {
-                assert!(l.digits[0].0 > l.gx + gw);
+                assert!(l.pads[0].cells[0].0 > l.gx + gw);
             }
             for i in [0, s.cells() / 2, s.cells() - 1] {
                 let (x, y, cw, ch) = l.cell_rect(i);
@@ -2076,7 +2159,7 @@ mod tests {
     fn six_by_six_plays() {
         let mut g = Game::new(vec![crate::palette::builtin()], 0);
         g.new_board(sudoku::SIX, 0, 20261122);
-        assert_eq!(g.lay.digits.len(), 6);
+        assert_eq!(g.lay.pads[0].cells.len(), 6);
         let open: Vec<usize> = (0..36).filter(|&i| g.puzzle[i] == 0).collect();
         // Tapping a cell's middle selects it.
         let (x, y, w, h) = g.lay.cell_rect(open[0]);
@@ -2299,11 +2382,43 @@ mod tests {
             for s in SHAPES {
                 let l = Layout::new(w, h, s);
                 let (_, sy, _, sh) = l.swipe;
-                let digits_bottom = l.digit_hits.iter().map(|r| r.1 + r.3).max().unwrap();
+                let digits_bottom = l.pads.iter().flat_map(|p| p.hits.iter()).map(|r| r.1 + r.3).max().unwrap();
                 assert!(sy >= digits_bottom && sh >= 30, "{w}x{h} {} swipe pad below the digits", s.name());
                 assert!(sy + sh <= l.rule.0);
             }
         }
+    }
+
+    #[test]
+    fn the_number_and_notes_rows() {
+        let mut g = Game::new(vec![crate::palette::builtin()], 0);
+        g.new_board(NINE, 0, 20261122);
+        let i = (0..81).find(|&i| g.vals[i] == 0).unwrap();
+        let cand = sudoku::candidates(NINE, &g.vals)[i];
+        let free = (1..=9u8).find(|&d| cand & (1 << d) != 0).unwrap();
+        // With a cell selected: the notes row notes, the number row places.
+        g.run(Action::Select(i));
+        g.run(Action::Note(free));
+        assert!(g.notes_mode);
+        assert_ne!(g.notes[i] & (1 << free), 0);
+        g.run(Action::Num(g.solution[i]));
+        assert!(!g.notes_mode);
+        assert_eq!(g.vals[i], g.solution[i]);
+        // With none: fast mode. Tapping the other row switches placing and
+        // noting; the same button again puts the digit down.
+        g.run(Action::Select(i));
+        assert_eq!(g.sel, None);
+        g.run(Action::Num(4));
+        assert_eq!((g.fast, g.fast_digit, g.notes_mode), (true, Some(4), false));
+        g.run(Action::Note(4));
+        assert_eq!((g.fast_digit, g.notes_mode), (Some(4), true));
+        g.run(Action::Note(4));
+        assert_eq!(g.fast_digit, None);
+        // Tapping a row's button is the screen's way; the keyboard's digit keys
+        // keep the press-again-for-notes cycle.
+        g.run(Action::Digit(6));
+        g.run(Action::Digit(6));
+        assert_eq!((g.fast_digit, g.notes_mode), (Some(6), false), "notes were on, so the second press turns them off");
     }
 
     #[test]

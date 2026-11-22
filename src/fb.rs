@@ -7,6 +7,8 @@ pub struct Fb {
     pub w: i32,
     pub h: i32,
     pub px: Vec<u8>,
+    /// The text style for `text` and friends (set each frame by the game).
+    pub font: font::Style,
 }
 
 /// Text cell: 6 pixels wide (5x7 glyphs plus a gap), lines 10 apart.
@@ -15,7 +17,7 @@ pub const LH: i32 = 10;
 
 impl Fb {
     pub fn new(w: i32, h: i32) -> Self {
-        Fb { w, h, px: vec![BG; (w * h) as usize] }
+        Fb { w, h, px: vec![BG; (w * h) as usize], font: font::Style::Standard }
     }
 
     pub fn clear(&mut self, c: u8) {
@@ -93,12 +95,22 @@ impl Fb {
     pub fn text(&mut self, x: i32, y: i32, s: &str, c: u8) -> i32 {
         let mut cx = x;
         for ch in s.chars() {
-            if let Some(g) = font::glyph(ch.to_ascii_uppercase()) {
-                self.sprite_k(cx, y, &g, c, c, 1);
-            }
+            self.glyph(cx, y, ch.to_ascii_uppercase(), c, 1);
             cx += CW;
         }
         cx
+    }
+
+    /// One character in the current font, each font pixel `k` x `k`.
+    pub fn glyph(&mut self, x: i32, y: i32, ch: char, c: u8, k: i32) {
+        let Some(g) = font::styled(ch, self.font) else { return };
+        for r in 0..g.h {
+            for col in 0..5 {
+                if g.on(col, r) {
+                    self.rect(x + col as i32 * k, y + (r as i32 + g.top) * k, k, k, c);
+                }
+            }
+        }
     }
 
     /// Text at double size (each font pixel 2x2), 12 pixels per character.
@@ -109,9 +121,7 @@ impl Fb {
     /// Text with each font pixel a `k` x `k` block.
     pub fn text_k(&mut self, x: i32, y: i32, s: &str, c: u8, k: i32) {
         for (n, ch) in s.chars().enumerate() {
-            if let Some(g) = font::glyph(ch) {
-                self.sprite_k(x + n as i32 * k * CW, y, &g, c, c, k);
-            }
+            self.glyph(x + n as i32 * k * CW, y, ch, c, k);
         }
     }
 
@@ -148,9 +158,7 @@ impl Fb {
                 _ if inside => kc,
                 _ => c,
             };
-            if let Some(g) = font::glyph(ch.to_ascii_uppercase()) {
-                self.sprite_k(cx, y, &g, col, col, 1);
-            }
+            self.glyph(cx, y, ch.to_ascii_uppercase(), col, 1);
             cx += CW;
         }
         cx
