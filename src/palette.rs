@@ -1,0 +1,200 @@
+//! A small, loud palette. Everything on screen is one of 16 palette slots.
+//!
+//! Palettes ("colour schemes") are 8x2 pixel PNGs in `assets/palettes/`, listed
+//! in `assets/palettes.txt` (the same files as rusty-majong). The top row holds
+//! 8 bright colours and the bottom row their darkened versions:
+//!
+//! | col | top row (bright)                 | bottom row (dark)                  |
+//! |-----|----------------------------------|------------------------------------|
+//! | 0   | UI: given digits, text, frames   | UI dark: single grid lines, labels |
+//! | 1   | primary                          | primary dark                       |
+//! | 2   | red: wrong digits                | red dark                           |
+//! | 3   | highlight: selection, prompt     | highlight dark                     |
+//! | 4   | blue: your digits                | blue dark                          |
+//! | 5   | (tile body, unused)              | (unused)                           |
+//! | 6   | background                       | lattice dots, row/column shading   |
+//! | 7   | (tile colour, unused)            | (unused)                           |
+
+/// Interface colour: HUD, command line, bottom bar, dialogs.
+pub const UI: u8 = 0;
+pub const GREEN: u8 = 1;
+pub const RED: u8 = 2;
+pub const AMBER: u8 = 3;
+pub const BLUE: u8 = 4;
+pub const BODY: u8 = 5;
+pub const BG: u8 = 6;
+pub const TILE: u8 = 7;
+/// Darker interface colour: dashed rules, labels, button bar, dialog shadows.
+pub const UI_DK: u8 = 8;
+pub const DKGREEN: u8 = 9;
+pub const DKRED: u8 = 10;
+pub const DKAMBER: u8 = 11;
+pub const DKBLUE: u8 = 12;
+#[allow(dead_code)] // reached via shade_of(BODY)
+pub const BODY_SH: u8 = 13;
+pub const DIM: u8 = 14;
+pub const TILE_SH: u8 = 15;
+/// Black ink in face art: drawn in the background colour.
+pub const BLACK: u8 = BG;
+
+/// Palette slots: the 16 pixels of the palette PNG (8 columns x 2 rows).
+pub const SLOTS: usize = 16;
+/// Width of a palette PNG; its height is 2.
+pub const COLS: usize = 8;
+pub type Rgb = [u8; 3];
+
+/// Grey level of the middle tone in three-level sprites.
+pub const GREY: u8 = 127;
+
+/// The darkened slot for a pixel under a cast shadow (bottom row of its column).
+/// The table (background) darkens to the lattice colour below it.
+pub fn shade_of(c: u8) -> u8 {
+    if (c as usize) < COLS {
+        c + COLS as u8
+    } else {
+        c
+    }
+}
+
+/// Slots that face art (faces.png) can use. BLACK is the background slot, used
+/// as ink; the UI colours, lattice, tile body and tile colour are scheme roles,
+/// not art colours.
+pub const INK: [u8; 9] = [GREEN, RED, AMBER, BLUE, BLACK, DKGREEN, DKRED, DKAMBER, DKBLUE];
+
+/// Software multiply of a colour by a grey level (0..=255).
+pub const fn mul(c: Rgb, g: u8) -> Rgb {
+    let g = g as u16;
+    [
+        ((c[0] as u16 * g + 127) / 255) as u8,
+        ((c[1] as u16 * g + 127) / 255) as u8,
+        ((c[2] as u16 * g + 127) / 255) as u8,
+    ]
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scheme {
+    pub name: String,
+    pub rgb: [Rgb; SLOTS],
+}
+
+const K: Rgb = [0, 0, 0];
+const P_PRIMARY: Rgb = [0x2E, 0xD8, 0x6A];
+const P_RED: Rgb = [0xEE, 0x25, 0x3A];
+const P_HIGHLIGHT: Rgb = [0xFF, 0xB0, 0x00];
+const P_BLUE: Rgb = [0x2A, 0x5C, 0xF0];
+
+/// Built-in PHOSPHOR palette (identical to assets/palettes/phosphor.png). It is
+/// the fallback when no palette file loads, and the reference faces.png is
+/// snapped to, so face art keeps its slots however the palette files change.
+pub const PALETTE: [Rgb; SLOTS] = [
+    P_PRIMARY, // UI
+    P_PRIMARY,
+    P_RED,
+    P_HIGHLIGHT,
+    P_BLUE,
+    K, // tile body
+    K, // background
+    P_PRIMARY, // tile
+    mul(P_PRIMARY, GREY), // UI dark
+    mul(P_PRIMARY, GREY),
+    mul(P_RED, GREY),
+    mul(P_HIGHLIGHT, GREY),
+    mul(P_BLUE, GREY),
+    K, // tile body in shadow
+    [0x10, 0x2C, 0x1C],
+    mul(P_PRIMARY, GREY), // tile dark
+];
+
+pub fn builtin() -> Scheme {
+    Scheme { name: "PHOSPHOR".into(), rgb: PALETTE }
+}
+
+/// Palette from the RGBA bytes of an 8x2 image (row-major, top row first).
+/// Alpha is ignored: palette colours are always opaque.
+pub fn from_rgba(name: &str, rgba: &[u8]) -> Scheme {
+    let mut rgb = [K; SLOTS];
+    for (slot, px) in rgba.chunks_exact(4).take(SLOTS).enumerate() {
+        rgb[slot] = [px[0], px[1], px[2]];
+    }
+    Scheme { name: name.to_ascii_uppercase(), rgb }
+}
+
+/// Names listed in palettes.txt: one per line, `#` comments, letters, digits,
+/// `-` and `_` only; duplicates ignored.
+pub fn parse_list(list: &str) -> Vec<String> {
+    let mut names: Vec<String> = vec![];
+    for line in list.lines() {
+        let name = line.split('#').next().unwrap_or("").trim();
+        if name.is_empty() {
+            continue;
+        }
+        if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+            eprintln!("rusty-sudoku: palettes.txt: ignoring {name:?} (use letters, digits, - and _)");
+            continue;
+        }
+        if !names.iter().any(|n| n.eq_ignore_ascii_case(name)) {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+/// Load the palettes listed in `root/palettes.txt` from `root/palettes/<name>.png`
+/// (file system on desktop, HTTP on the web). Unreadable or wrong-sized files
+/// are skipped with a message; if none load, the built-in PHOSPHOR is used.
+/// `fresh` skips the browser's cache (reloads on the web).
+pub async fn load(root: &str, fresh: bool) -> Vec<Scheme> {
+    let root = root.trim_end_matches('/');
+    let list = macroquad::file::load_string(&fresh_path(&format!("{root}/palettes.txt"), fresh)).await.unwrap_or_default();
+    let mut schemes = vec![];
+    for name in parse_list(&list) {
+        let path = format!("{root}/palettes/{name}.png");
+        let Ok(bytes) = macroquad::file::load_file(&fresh_path(&path, fresh)).await else {
+            eprintln!("rusty-sudoku: palette {path} not found");
+            continue;
+        };
+        match decode(&bytes) {
+            Ok(rgba) => schemes.push(from_rgba(&name, &rgba)),
+            Err(e) => eprintln!("rusty-sudoku: palette {path}: {e}"),
+        }
+    }
+    if schemes.is_empty() {
+        schemes.push(builtin());
+    }
+    schemes
+}
+
+/// Decode an 8x2 palette PNG to RGBA.
+pub fn decode(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    use macroquad::prelude::{Image, ImageFormat};
+    let img = Image::from_file_with_format(bytes, Some(ImageFormat::Png)).map_err(|e| format!("{e:?}"))?;
+    if (img.width as usize, img.height as usize) != (COLS, 2) {
+        return Err(format!("is {}x{}, expected {COLS}x2", img.width, img.height));
+    }
+    Ok(img.bytes)
+}
+
+/// `path`, made unique when `fresh` so the browser fetches it again.
+pub fn fresh_path(path: &str, fresh: bool) -> String {
+    if fresh {
+        format!("{path}?t={}", (macroquad::miniquad::date::now() * 1000.0) as u64)
+    } else {
+        path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shipped_palettes_load_and_phosphor_matches_builtin() {
+        let list = std::fs::read_to_string("assets/palettes.txt").expect("assets/palettes.txt");
+        let schemes: Vec<Scheme> = parse_list(&list)
+            .iter()
+            .map(|n| from_rgba(n, &decode(&std::fs::read(format!("assets/palettes/{n}.png")).expect(n)).unwrap()))
+            .collect();
+        assert!(schemes.len() >= 2);
+        assert_eq!(schemes[0], builtin());
+    }
+}

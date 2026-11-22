@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="theme-color" content="#000000">
+    <title>RUSTY-SUDOKU</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+        canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            outline: none;
+            image-rendering: pixelated;
+            background: #000;
+            /* No browser panning/zooming/long-press menus: touches go to the game. */
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glcanvas" tabindex="1" autofocus></canvas>
+    <!-- miniquad's WebGL/wasm loader, vendored from the miniquad crate (js/gl.js).
+         Re-copy it if the miniquad version in Cargo.lock changes. -->
+    <script src="gl.js"></script>
+    <!-- quad-snd's Web Audio plugin (sound effects). Load after gl.js, before load(). -->
+    <script src="audio.js"></script>
+    <!-- Saved settings and board in localStorage (src/settings.rs). -->
+    <script src="net.js"></script>
+    <script>
+        load("rusty-sudoku.wasm");
+        // Keep keyboard focus on the game so the hotkeys work after clicking.
+        const gameCanvas = document.getElementById("glcanvas");
+        gameCanvas.focus();
+        gameCanvas.addEventListener("pointerdown", () => gameCanvas.focus());
+    </script>
+</body>
+</html>
